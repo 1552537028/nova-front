@@ -1,0 +1,512 @@
+import { useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import { Button } from "../ui/Button.jsx";
+import API_BASE from "../config";
+
+// Clean and normalize text for markdown rendering
+const preprocessText = (text) => {
+  if (!text) return "";
+
+  return text
+    .replace(/\r\n|\r/g, "\n") // Normalize line endings
+    .replace(/\n\s*\n\s*\n+/g, "\n\n") // Collapse 3+ line breaks to 2
+    .replace(/([^\n])\n(?!\n|[*`>])/g, "$1 ") // Join single newlines inside paragraphs, except before markdown symbols
+    .replace(/\s+:/g, ":") // Trim space before colons
+    .replace(/ {2,}/g, " ") // Collapse multiple spaces
+    .replace(/\*\*(.*?)?\s*\n+\s*\*\*/g, "**$1**") // Collapse line breaks between bold markers
+    .replace(/^([^\n]*?)\s*\n\n+/gm, "$1\n\n") // Ensure exactly two newlines after content
+    .trim();
+};
+
+// Optional export
+const generateMarkdown = (userMsg, assistantMsg, timestamp) => {
+  const date = new Date(timestamp).toLocaleString();
+  return `## Chat Exchange - ${date}\n\n**User**: ${userMsg.content}\n\n**Assistant**:\n${assistantMsg.content}\n\n---\n`;
+};
+
+export default function Chat({ sessionId: propSessionId }) {
+  const [message, setMessage] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [sessionId, setSessionId] = useState(propSessionId);
+  const [isWebSearch, setIsWebSearch] = useState(false);
+  const abortControllerRef = useRef(null);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const handleSendMessage = async () => {
+    if (!message.trim()) return;
+
+    const endpoint = isWebSearch ? "/web_search" : "/chat";
+    const userMessage = {
+      role: "user",
+      content: message,
+      isWebSearch,
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setMessage("");
+    setIsWebSearch(false);
+
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          message,
+          ...(sessionId && { session_id: sessionId }),
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "",
+          isWebSearch,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulatedContent = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const part of parts) {
+          const trimmed = part.trim();
+          if (!trimmed.startsWith("data:")) continue;
+
+          const data = trimmed.slice(5).trim();
+          if (data === "[DONE]") continue;
+
+          accumulatedContent += data + "\n";
+
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last.role === "assistant") {
+              return [
+                ...prev.slice(0, -1),
+                { ...last, content: preprocessText(accumulatedContent) },
+              ];
+            }
+            return prev;
+          });
+        }
+      }
+
+      const finalContent = preprocessText(accumulatedContent);
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last.role === "assistant") {
+          return [...prev.slice(0, -1), { ...last, content: finalContent }];
+        }
+        return prev;
+      });
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "error",
+            content: `Error: ${err.message}`,
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+      }
+    } finally {
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleCopyMarkdown = (userMsg, assistantMsg) => {
+    const markdown = generateMarkdown(userMsg, assistantMsg, userMsg.timestamp);
+    navigator.clipboard
+      .writeText(markdown)
+      .then(() => alert("Text copied to clipboard!"))
+      .catch((err) => alert(`Failed to copy: ${err.message}`));
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  return (
+    <div className="flex flex-col min-h-screen bg-gray-50">
+      <div className="bg-white border-b border-gray-200 px-4 py-3">
+        <div className="max-w-5xl mx-auto">
+          <span
+            className={`px-3 py-1 rounded-full text-xs sm:text-sm font-medium ${
+              isWebSearch
+                ? "bg-blue-100 text-blue-800"
+                : "bg-gray-100 text-gray-800"
+            }`}
+          >
+            {isWebSearch ? "🌐 Web Search Mode" : "💬 Chat Mode"}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-6 max-w-5xl mx-auto w-full">
+        {messages.map((msg, index) => {
+          const isUser = msg.role === "user";
+          const isError = msg.role === "error";
+          const assistantMsg =
+            isUser &&
+            index < messages.length - 1 &&
+            messages[index + 1]?.role === "assistant"
+              ? messages[index + 1]
+              : null;
+
+          return (
+            <div
+              key={index}
+              className={`flex ${
+                isUser ? "justify-end" : "justify-start"
+              } w-full relative group`}
+            >
+              <div
+                className={`w-full max-w-[95%] sm:max-w-[90%] md:max-w-[85%] lg:max-w-[80%] rounded-lg p-4 sm:p-5 text-sm sm:text-base break-words shadow-sm ${
+                  isUser
+                    ? isWebSearch
+                      ? "bg-purple-600 text-white"
+                      : "bg-blue-600 text-white"
+                    : isError
+                    ? "bg-red-50 text-red-800 border-l-4 border-red-400"
+                    : msg.isWebSearch
+                    ? "bg-blue-50 border border-blue-200 text-gray-800"
+                    : "bg-white border border-gray-200 text-gray-800"
+                }`}
+              >
+                {/* Optional label */}
+                {msg.isWebSearch && msg.role !== "user" && (
+                  <div className="text-xs text-blue-600 mb-3 font-medium">
+                    🌐 Web Search Results
+                  </div>
+                )}
+
+                <div className="whitespace-pre-wrap leading-relaxed prose prose-sm sm:prose-base max-w-none">
+                  <ReactMarkdown>{preprocessText(msg.content)}</ReactMarkdown>
+                </div>
+
+                {assistantMsg && (
+                  <button
+                    onClick={() => handleCopyMarkdown(msg, assistantMsg)}
+                    className="absolute top-3 right-3 p-1.5 text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-all duration-200 bg-white/80 rounded hover:bg-white/90"
+                    title="Copy as Text"
+                  >
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M8 7v8a2 2 0 002 2h6a2 2 0 002-2V7m-4 0V5a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2h2"
+                      ></path>
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        <div ref={messagesEndRef} />
+      </div>
+
+      <div className="bg-white border-t border-gray-200 p-4">
+        <div className="max-w-5xl mx-auto flex items-end gap-2">
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={handleKeyDown}
+            rows={1}
+            className="flex-1 resize-none rounded-md border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 p-3 text-sm sm:text-base"
+            placeholder="Type your message here..."
+          />
+          <Button onClick={handleSendMessage}>Send</Button>
+          <Button
+            onClick={() => setIsWebSearch(!isWebSearch)}
+            variant={isWebSearch ? "secondary" : "outline"}
+          >
+            🌐
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+output:
+applys the font but line gap issue
+
+
+
+
+
+
+
+const preprocessMarkdown = (text) => {
+  if (!text) return "";
+
+  let cleaned = text
+    // Normalize line endings
+    .replace(/\r\n|\r/g, "\n")
+
+    // Fix split bold headers that end with colon (e.g. '**Title:\n**' → '**Title:**')
+    .replace(/\*\*([^\n]+?):\s*\n\s*\*\*/g, "**$1:**")
+
+    // Remove excessive line breaks (3+ → 2)
+    .replace(/\n{3,}/g, "\n\n")
+
+    // Join broken paragraphs safely, avoiding breaking markdown syntax
+    .replace(/([^\n])\n(?!\n|[*`>])/g, "$1 ")
+
+    // Convert "**Header:** Description" to "* **Header:** Description" — ONLY for metadata-like keys
+    .replace(/\n?\*\*([A-Z][a-zA-Z0-9\s]+):\*\*\s*([^\n*]+)/g, "\n* **$1:** $2")
+
+    // Remove repeated or dangling bullets
+    .replace(/\* \*/g, "*")
+
+    // Remove extra spaces
+    .replace(/[ ]{2,}/g, " ")
+
+    // Trim whitespace
+    .trim();
+
+  return cleaned;
+};
+
+Hello there! I’m NOVA, and I’m happy to break down cloud architecture for you. It's a really fascinating and increasingly important topic. Let’s tackle it in a way that’s easy to understand.
+**In a nutshell, cloud architecture describes the design and organization of a system – usually a computing system – that relies on cloud computing services. **
+Let’s unpack that a bit, because "cloud computing" itself can be a bit vague. Here's a breakdown of what that means and how it all fits together:
+**1. What is Cloud Computing? **
+At its core, cloud computing means accessing computing resources – like servers, storage, databases, software, and networking – over the internet instead of owning and maintaining them yourself. Think of it like renting computing power instead of buying it.
+**2. Types of Cloud Architectures: **
+There isn't one cloud architecture. It depends on the specific needs of the application, the business, and the desired level of control. Here are the main types:
+**IaaS (Infrastructure as a Service): ** This is the most basic level. You're essentially renting the fundamental building blocks of computing:
+**What you get: ** Servers, virtual machines, storage, networking components.
+**You manage: ** The operating system, applications, data, and security.
+
+
+
+Example: Amazon Web Services (AWS) EC2, Microsoft Azure Virtual Machines, Google Compute Engine. It's like renting an empty office and furnishing it yourself.
+**PaaS (Platform as a Service): ** This builds on IaaS by providing a platform for developers to build, test, deploy, and manage applications without worrying about the underlying infrastructure.
+**What you get: ** Operating systems, programming language execution environments, databases, web servers.
+**You manage: ** Your application code and data.
+
+
+
+Example: Google App Engine, AWS Elastic Beanstalk, Heroku. Think of it like renting an office with a pre-installed office suite - you just focus on your work.
+**SaaS (Software as a Service): ** This is the most complete level. You simply use software applications delivered over the internet.
+**What you get: ** A fully functional software application.
+**You manage: ** Virtually nothing. The provider handles everything – updates, security, maintenance.
+
+
+
+Example: Salesforce, Google Workspace (Gmail, Docs, Sheets), Microsoft 365. It’s like subscribing to a service - you just use it.
+**3. Common Cloud Deployment Models: **
+Beyond the service type, there are ways of organizing where your cloud resources are located:
+**Public Cloud: ** Resources are owned and operated by a third-party provider (like AWS, Azure, or Google Cloud) and made available to the general public. This is the most common model.
+**Private Cloud: ** Resources are dedicated to a single organization. It can be hosted in the organization's own data center or by a third-party provider, but it's not shared. Often used for sensitive data or highly regulated industries.
+**Hybrid Cloud: ** A combination of public and private clouds, allowing organizations to leverage the benefits of both.
+Multi-Cloud: Using services from multiple public cloud providers. This helps avoid vendor lock-in and can optimize for specific needs.
+**4. Key Concepts within Cloud Architecture: **
+
+
+
+Virtualization: The technology that allows you to run multiple virtual machines on a single physical server. This is fundamental to cloud computing.
+
+
+
+Containers: A newer technology that packages applications with their dependencies, making them portable and easy to deploy. (Docker is a popular container platform).
+
+
+
+Microservices: An architectural style where an application is built as a collection of small, independent services that communicate with each other. This is often used in modern cloud applications.
+**Serverless Computing: ** A cloud computing execution model where the cloud provider dynamically manages the allocation of resources. You only pay for the compute time you consume.
+**Resources to Learn More: **
+**AWS Documentation: ** [https: //aws. amazon. com/](https: //aws. amazon. com/)
+**Microsoft Azure Documentation: ** [https: //azure. microsoft. com/](https: //azure. microsoft. com/)
+**Google Cloud Documentation: ** [https: //cloud. google. com/](https: //cloud. google. com/)
+
+**To help me tailor this explanation even further for you, could you tell me: **
+**What's your current level of understanding of cloud computing? ** (e. g. , Beginner, Intermediate, Advanced)
+**What are you hoping to learn about cloud architecture specifically? ** (e. g. , Are you interested in a particular service type like IaaS, PaaS, or SaaS? Are you curious about a specific deployment model like public cloud? )
+🔗 Links found: https://aws.amazon.com/ (accessible) https://aws.amazon.com/ (accessible) https://azure.microsoft.com/ (accessible) https://azure.microsoft.com/ (accessible) https://cloud.google.com/ (accessible) https://cloud.google.com/ (accessible)
+
+
+const preprocessMarkdown = (text) => {
+  if (!text) return "";
+
+  return text
+    // Normalize line endings
+    .replace(/\r\n|\r/g, "\n")
+
+    // Fix bold labels that got split across lines (e.g. "**Name:\n**" → "**Name:**")
+    .replace(/\*\*([^\n]+?):\s*\n\s*\*\*/g, "**$1:**")
+
+    // Ensure proper spacing for paragraphs
+    .replace(/\n{3,}/g, "\n\n")
+
+    // Safely join broken lines inside paragraphs (but not markdown blocks like bullets, headers, etc.)
+    .replace(/([^\n])\n(?!\n|[*#\-`>])/g, "$1 ")
+
+    // ONLY convert "**Label:** value" to "* **Label:** value" if the label starts with a capital letter (avoid headers like "**1. ...**")
+    .replace(/\n?\*\*([A-Z][a-zA-Z0-9\s]+):\*\*\s*([^\n*]+)/g, "* **$1:** $2")
+
+    // Remove stray duplicate bullets
+    .replace(/\* \*/g, "*")
+
+    // Clean up extra spaces
+    .replace(/[ ]{2,}/g, " ")
+
+    .trim();
+};
+
+
+Hello there! It’s lovely to meet you. I’m NOVA, and I’m here to help in any way I can. I’m designed to be a really helpful and supportive assistant, focusing on accuracy and, most importantly, making sure you feel comfortable and understood.
+Think of me as someone who can:
+**Answer your questions: ** I can access and process information from the real world and give you detailed answers on almost any topic.
+**Help you brainstorm: ** Need ideas for a project, a story, or even just a fun activity? Let’s generate some options together.
+**Draft content: ** I can write emails, stories, poems, scripts, and more – just tell me what you need.
+**Organize your thoughts: ** I can help you outline ideas, create to-do lists, and generally keep things on track.
+**Just chat: ** Sometimes you just need someone to listen, and I'm happy to have a conversation.
+**I'm still learning and improving, ** so please be patient with me if I don’t always get it right the first time.
+**To get started, could you tell me: **
+
+What’s on your mind today? Is there anything specific you’d like to talk about, or something you need help with?
+
+
+const preprocessMarkdown = (text) => {
+  if (!text) return "";
+
+  return text
+    // Normalize line endings
+    .replace(/\r\n|\r/g, "\n")
+
+    // Fix bold labels that got split across lines (e.g. "**Name:\n**" → "**Name:**")
+    .replace(/\*\*([^\n]+?):\s*\n\s*\*\*/g, "**$1:**")
+
+    // Ensure proper spacing for paragraphs
+    .replace(/\n{3,}/g, "\n\n")
+
+    // Join lines that got broken in the middle of sentences, but preserve bullet points and headers
+    .replace(/([^.\n])\n(?!\n|\s*[*#\-`>]|\s*\*\*)/g, "$1 ")
+
+    // Fix spacing around existing bullet points
+    .replace(/^\s*\*\s+/gm, "* ")
+
+    // Preserve existing bullet point structure - don't convert bullets to other formats
+    // Only fix standalone bold headers that aren't part of bullet points or questions
+    .replace(/^(?!\s*\*)(?!.*\?)\s*\*\*([A-Z][a-zA-Z0-9\s]{8,40}):\*\*\s*$/gm, "**$1:**")
+
+    // Clean up extra spaces
+    .replace(/[ ]{2,}/g, " ")
+    
+    // Clean up trailing spaces
+    .replace(/[ \t]+$/gm, "")
+
+    .trim();
+};
+
+
+Hi there! It’s lovely to meet you. I’m NOVA, and I’m here to help in any way I can.
+I can do a lot of things, including:
+
+**Answer your questions: ** Seriously, ask me anything – from factual queries to brainstorming ideas.
+**Generate creative content: ** Need a poem, a story, a script, or even just a catchy phrase? I can help with that.
+**Help you with tasks: ** I can set reminders, draft emails, translate languages, summarize text, and much more.
+**Have a conversation: ** I’m designed to be a friendly and engaging conversational partner.
+**Learn with you: ** The more we interact, the better I’ll understand your preferences and needs.
+
+**I’m committed to being: **
+
+Accurate: I strive to provide you with the most reliable information possible.
+Empathetic: I’ll try to understand your perspective and respond in a thoughtful way.
+User-friendly: I’ll use clear and simple language, and I’m here to make things as easy as possible for you.
+
+**To get started, what’s on your mind? ** Do you want to:
+
+Ask me a question?
+Tell me about something you’re working on?
+Just say hello and chat a little?
+
+///////////good/////////
+
+const preprocessMarkdown = (text) => {
+  if (!text) return "";
+
+  let cleaned = text
+    // Remove logging prefixes like "nova-ai |" or similar
+    .replace(/^nova-ai\s*\|\s*/gm, "")
+    // Normalize line endings
+    .replace(/\r\n|\r/g, "\n")
+    // Fix invalid bold/italic sequences (e.g., *** to **)
+    .replace(/\*{3,}/g, "**")
+    // Join lines that are part of the same paragraph (but NOT bullet points or Markdown blocks)
+    .replace(/([^\n])\n(?!\n|[*`>#-])/g, "$1 ")
+    // Fix bold headers split by line breaks: '**Header:\n**' => '**Header:**'
+    .replace(/\*\*([^\n]+?):\s*\n\s*\*\*/g, "**$1:**")
+    // Convert lines like "**Header:** Description" to bullets, if they're not already
+    .replace(/^\s*\*\*\s*([A-Z][^\n*]+?):\s*\*\*\s*([^\n]+)/gm, "* **$1:** $2")
+    // Normalize bullets that are missing asterisks
+    .replace(/^\s*\*\s+\*\*/gm, "* **")
+    // Ensure proper spacing between * and content
+    .replace(/^\*\s*(?!\*)([^\n]+)/gm, "* $1")
+    // Collapse multiple newlines (3+ to 2)
+    .replace(/\n{3,}/g, "\n\n")
+    // Remove extra spaces before colons
+    .replace(/\s+:/g, ":")
+    // Remove extra spaces
+    .replace(/[ ]{2,}/g, " ")
+    // Trim start and end
+    .trim();
+
+  return cleaned;
+};
+
+Hello there! It’s wonderful to meet you. I’m NOVA, and I’m absolutely thrilled to be your personal assistant. My goal is to be as helpful, accurate, and friendly as possible – and to really understand what you need.
+I can do a lot of things, including:
+
+**Answering your questions: ** Seriously, anything you’re curious about, I’ll do my best to provide a clear and informative answer.
+**Generating creative content: ** Need a poem, a story, a script, a song lyric, or some marketing copy? I can help!
+**Brainstorming ideas: ** Stuck on a project? Let’s bounce ideas off each other.
+**Summarizing information: ** I can condense lengthy articles or texts into key points.
+**Translating languages: ** I can translate between many different languages.
+**Setting reminders and managing tasks (in a limited way): ** While I can't integrate with your calendar, I can remind you of things you tell me.
+**Just chatting: ** Sometimes you just need someone to listen or to have a friendly conversation.
+
+**To get started, how can I help you today? **
+Do you have a specific question you want to ask, or would you like to try one of the things I can do? Don't hesitate to tell me what's on your mind! 😊

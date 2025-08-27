@@ -1,0 +1,1108 @@
+Hello there! It’s August 24, 2025, 06:28 AM. I’m happy to explain string theory for you.
+
+It's a fascinating, and admittedly complex, area of theoretical physics! 🌟## What is
+
+String Theory?
+
+At its core, string theory proposes a radical shift in our understanding of the universe. Instead of thinking of fundamental particles like electrons and quarks as tiny, indivisible points, string theory suggests they are actually incredibly small, vibrating strings.
+
+Think of it like a guitar string: different vibrations create different musical notes. Similarly, different vibrational patterns of these tiny strings create different particles with different properties – like mass and charge. ## The
+
+Problems String Theory Aims to SolveTraditional physics, particularly the Standard Model of particle physics, has some major issues:* Gravity: It doesn't seamlessly incorporate gravity, which is described by Einstein's theory of General Relativity.* Quantum Mechanics: It struggles to reconcile quantum mechanics (which governs the behavior of very small things) with general relativity. * Singularities: General Relativity predicts singularities – points of infinite density – at the center of black holes and at the beginning of the universe (the Big Bang).## Key
+
+Concepts of String TheoryHere's a breakdown of some crucial ideas:* Extra Dimensions: String theory requires the existence of extra spatial dimensions beyond the three we experience (length, width, and height) and time.
+
+The most common versions of string theory require 10 dimensions (9 spatial and 1 time). These extra dimensions are thought to be curled up or “compactified” at incredibly small scales, making them undetectable by our current instruments. 💡* Branes: String theory introduces the concept of “branes,” which are higher-dimensional objects on which strings can live.
+
+Our universe might be confined to a 3-dimensional brane floating in a higher-dimensional space.* Superstrings and Supersymmetry: Most versions of string theory incorporate supersymmetry, a theoretical symmetry that relates bosons (force-carrying particles) and fermions (matter particles).
+
+Supersymmetry predicts the existence of “superpartners” for all known particles.## Current
+
+Status and ChallengesString theory is still a theoretical framework.
+
+There’s currently no direct experimental evidence to prove its existence. * Lack of Testability: A major criticism is its difficulty in making testable predictions.
+
+The energies required to directly observe strings are far beyond the capabilities of current or foreseeable particle accelerators.* Multiple Solutions: String theory has a vast “landscape” of possible solutions, making it difficult to pinpoint a specific one that accurately describes our universe. ** Resources for Further Learning:*** ** Wikipedia:** https://en.wikipedia.org/wiki/String_theory – A good starting point for a basic overview.* Stanford Encyclopedia of Philosophy: https://plato.stanford.edu/entries/string-theory/ – A more philosophical exploration of the theory.* NASA's Science Website: https://science.nasa.gov/string-theory/ – Provides accessible explanations and connections to NASA’s research.
+
+Do you want me to delve deeper into a specific aspect of string theory, such as:* The different versions of string theory (e.g., M-theory)?* The role of extra dimensions?* The potential implications of string theory for cosmology (the study of the universe)? 🔹 https://en.wikipedia.org/wiki/String_theory (accessible)🔹 https://en.wikipedia.org/wiki/String_theory (accessible)🔹 https://plato.stanford.edu/entries/string-theory/ (status 404)🔹 https://plato.stanford.edu/entries/string-theory/ (status 404)🔹 https://science.nasa.gov/string-theory/ (status 404)🔹 https://science.nasa.gov/string-theory/ (status 404)
+
+import { useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import { Button } from "../ui/Button.jsx";
+import API_BASE from "../config";
+
+// Enhanced text preprocessing for better markdown formatting
+const preprocessText = (text) => {
+  if (!text) return "";
+
+  let cleaned = text
+    .replace(/\r\n|\r/g, "\n") // Normalize line endings
+    
+    // Fix the specific pattern you're seeing
+    .replace(/(## [^?]+\?)(I'm|To|For|Let's|Here's)/g, "$1\n\n$2")
+    .replace(/(🌟 [^?]+\.)\s*([A-Z])/g, "$1\n\n$2")
+    .replace(/(Today\?)\s*([A-Z])/g, "$1\n\n$2")
+    .replace(/(\?\s*)([A-Z][a-z])/g, "$1\n\n$2")
+    .replace(/(\.)\s*([A-Z][a-z][^.]*\.)/g, "$1\n\n$2")
+    
+    // Fix headers without proper spacing
+    .replace(/(#+\s+[^\n]+?)([A-Z][^#\n]*)/g, "$1\n\n$2")
+    
+    // Fix emoji spacing
+    .replace(/(🔹|🌟|😊|✅|❌|💡|⭐)\s*([A-Z])/g, "$1 $2")
+    
+    // Fix word concatenation
+    .replace(/I'mdesigned/g, "I'm designed")
+    .replace(/Here'sa/g, "Here's a")
+    .replace(/Toget/g, "To get")
+    .replace(/I'mreally/g, "I'm really")
+    .replace(/Let'sget/g, "Let's get")
+    
+    // Convert bullet points
+    .replace(/^\* /gm, "🔹 ")
+    .replace(/^- /gm, "🔹 ")
+    
+    // Fix spacing around formatting
+    .replace(/\*\*([^*]+?)\*\*([a-zA-Z])/g, "**$1** $2")
+    .replace(/([a-zA-Z])\*\*([^*]+?)\*\*/g, "$1 **$2**")
+    
+    // Clean up multiple spaces and excessive line breaks
+    .replace(/ {2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return cleaned;
+};
+
+// Optional export for markdown generation
+const generateMarkdown = (userMsg, assistantMsg, timestamp) => {
+  const date = new Date(timestamp).toLocaleString();
+  return `# Chat Exchange - ${date}\n\n**User:** ${userMsg.content}\n\n**Assistant:**\n${assistantMsg.content}\n\n---\n`;
+};
+
+export default function Chat({ sessionId: propSessionId }) {
+  const [message, setMessage] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [sessionId, setSessionId] = useState(propSessionId);
+  const [isWebSearch, setIsWebSearch] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const abortControllerRef = useRef(null);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const handleSendMessage = async () => {
+    if (!message.trim() || isLoading) return;
+
+    const endpoint = isWebSearch ? "/web_search" : "/chat";
+    const userMessage = {
+      role: "user",
+      content: message,
+      isWebSearch,
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setMessage("");
+    setIsLoading(true);
+
+    // Cancel any ongoing request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          message: userMessage.content,
+          ...(sessionId && { session_id: sessionId }),
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Request failed: ${response.status}`);
+      }
+
+      // Add assistant message placeholder
+      const assistantMessage = {
+        role: "assistant",
+        content: "",
+        isWebSearch,
+        timestamp: new Date().toISOString(),
+      };
+
+      setMessages((prev) => [...prev, assistantMessage]);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulatedContent = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        // Process complete SSE events
+        const events = buffer.split("\n\n");
+        buffer = events.pop() || ""; // Keep incomplete event in buffer
+
+        for (const event of events) {
+          const lines = event.split("\n");
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const data = line.slice(6); // Remove "data: " prefix
+              if (data === "[DONE]") continue;
+              
+              accumulatedContent += data;
+
+              // Update the assistant message in real-time
+              setMessages((prev) => {
+                const newMessages = [...prev];
+                const lastMessage = newMessages[newMessages.length - 1];
+                if (lastMessage && lastMessage.role === "assistant") {
+                  // Apply preprocessing to accumulated content
+                  lastMessage.content = preprocessText(accumulatedContent);
+                }
+                return newMessages;
+              });
+            }
+          }
+        }
+      }
+
+      // Final update with complete content
+      setMessages((prev) => {
+        const newMessages = [...prev];
+        const lastMessage = newMessages[newMessages.length - 1];
+        if (lastMessage && lastMessage.role === "assistant") {
+          lastMessage.content = preprocessText(accumulatedContent);
+        }
+        return newMessages;
+      });
+
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        console.error("Chat error:", err);
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "error",
+            content: `Error: ${err.message}`,
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+      }
+    } finally {
+      setIsLoading(false);
+      setIsWebSearch(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleCopyMarkdown = (userMsg, assistantMsg) => {
+    const markdown = generateMarkdown(userMsg, assistantMsg, userMsg.timestamp);
+    navigator.clipboard
+      .writeText(markdown)
+      .then(() => alert("Text copied to clipboard!"))
+      .catch((err) => alert(`Failed to copy: ${err.message}`));
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  const handleStopGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200 px-4 py-3">
+        <div className="max-w-5xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span
+              className={`px-3 py-1 rounded-full text-xs sm:text-sm font-medium ${
+                isWebSearch
+                  ? "bg-blue-100 text-blue-800"
+                  : "bg-gray-100 text-gray-800"
+              }`}
+            >
+              {isWebSearch ? "🌐 Web Search Mode" : "💬 Chat Mode"}
+            </span>
+            {sessionId && (
+              <span className="text-xs text-gray-500">
+                Session: {sessionId.slice(-8)}
+              </span>
+            )}
+          </div>
+          {isLoading && (
+            <Button 
+              onClick={handleStopGeneration}
+              variant="outline"
+              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+            >
+              Stop
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-4 max-w-5xl mx-auto w-full">
+        {messages.length === 0 && (
+          <div className="text-center text-gray-500 mt-8">
+            <h2 className="text-xl font-semibold mb-2">Welcome to NOVA Assistant</h2>
+            <p>Ask me anything or toggle web search for current information!</p>
+          </div>
+        )}
+
+        {messages.map((msg, index) => {
+          const isUser = msg.role === "user";
+          const isError = msg.role === "error";
+          const assistantMsg =
+            isUser &&
+            index < messages.length - 1 &&
+            messages[index + 1]?.role === "assistant"
+              ? messages[index + 1]
+              : null;
+
+          return (
+            <div
+              key={index}
+              className={`flex ${
+                isUser ? "justify-end" : "justify-start"
+              } w-full`}
+            >
+              <div className="group relative max-w-[85%] sm:max-w-[80%]">
+                <div
+                  className={`rounded-lg px-4 py-3 text-sm sm:text-base shadow-sm ${
+                    isUser
+                      ? isWebSearch
+                        ? "bg-blue-600 text-white"
+                        : "bg-gray-800 text-white"
+                      : isError
+                      ? "bg-red-50 text-red-800 border border-red-200"
+                      : msg.isWebSearch
+                      ? "bg-blue-50 border border-blue-200 text-gray-800"
+                      : "bg-white border border-gray-200 text-gray-800"
+                  }`}
+                >
+                  {/* Web search indicator */}
+                  {msg.isWebSearch && !isUser && (
+                    <div className="text-xs text-blue-600 mb-2 font-medium flex items-center gap-1">
+                      🌐 Web Search Results
+                    </div>
+                  )}
+
+                  {/* Message content */}
+                  <div className="prose prose-sm sm:prose-base max-w-none">
+                    {isUser ? (
+                      <div className="whitespace-pre-wrap">{msg.content}</div>
+                    ) : (
+                      <ReactMarkdown
+                        components={{
+                          // Custom components for better rendering
+                          h1: ({children}) => <h1 className="text-xl font-bold mb-3 mt-4 text-blue-700">{children}</h1>,
+                          h2: ({children}) => <h2 className="text-lg font-semibold mb-2 mt-3 text-blue-600">{children}</h2>,
+                          h3: ({children}) => <h3 className="text-base font-medium mb-2 mt-3 text-blue-500">{children}</h3>,
+                          ul: ({children}) => <ul className="space-y-2 my-3">{children}</ul>,
+                          ol: ({children}) => <ol className="space-y-2 my-3">{children}</ol>,
+                          li: ({children}) => <li className="flex items-start gap-2 text-sm leading-relaxed">{children}</li>,
+                          p: ({children}) => {
+                            // Handle paragraphs that start with emojis (like bullet points)
+                            const childrenStr = children?.toString() || "";
+                            if (childrenStr.startsWith("🔹")) {
+                              return <div className="flex items-start gap-2 mb-2 text-sm leading-relaxed">{children}</div>;
+                            }
+                            return <p className="mb-3 leading-relaxed text-sm">{children}</p>;
+                          },
+                          strong: ({children}) => <strong className="font-semibold text-gray-900">{children}</strong>,
+                          em: ({children}) => <em className="italic text-gray-700">{children}</em>,
+                          code: ({inline, children}) => 
+                            inline ? 
+                              <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs font-mono">{children}</code> :
+                              <pre className="bg-gray-100 p-3 rounded text-xs font-mono overflow-x-auto my-3"><code>{children}</code></pre>,
+                          blockquote: ({children}) => 
+                            <blockquote className="border-l-4 border-blue-300 pl-4 italic my-3 text-gray-600">{children}</blockquote>,
+                          hr: () => <hr className="border-gray-300 my-4" />,
+                        }}
+                      >
+                        {msg.content || (isLoading ? "Thinking..." : "")}
+                      </ReactMarkdown>
+                    )}
+                  </div>
+
+                  {/* Copy button */}
+                  {assistantMsg && !isUser && (
+                    <button
+                      onClick={() => handleCopyMarkdown(messages[index - 1], assistantMsg)}
+                      className="absolute top-2 right-2 p-1.5 text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-all duration-200 bg-white/80 hover:bg-white/90 rounded"
+                      title="Copy conversation"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7v8a2 2 0 002 2h6a2 2 0 002-2V7m-4 0V5a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2h2" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Loading indicator */}
+        {isLoading && (
+          <div className="flex justify-start">
+            <div className="bg-white border border-gray-200 rounded-lg px-4 py-3 max-w-[80%]">
+              <div className="flex items-center gap-2 text-gray-500">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                <span className="text-sm">NOVA is thinking...</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input Area */}
+      <div className="bg-white border-t border-gray-200 p-4">
+        <div className="max-w-5xl mx-auto">
+          <div className="flex items-end gap-2">
+            <div className="flex-1 relative">
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Type your message here..."
+                rows={1}
+                disabled={isLoading}
+                className="w-full resize-none rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 p-3 text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  minHeight: '44px',
+                  maxHeight: '120px',
+                }}
+              />
+            </div>
+            
+            <Button
+              onClick={handleSendMessage}
+              disabled={!message.trim() || isLoading}
+              className="px-4 py-3"
+            >
+              {isLoading ? (
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+              ) : (
+                "Send"
+              )}
+            </Button>
+            
+            <Button
+              onClick={() => setIsWebSearch(!isWebSearch)}
+              variant={isWebSearch ? "secondary" : "outline"}
+              className="px-3 py-3"
+              title={isWebSearch ? "Switch to Chat Mode" : "Switch to Web Search Mode"}
+            >
+              🌐
+            </Button>
+          </div>
+          
+          {/* Mode indicator */}
+          <div className="mt-2 text-xs text-gray-500 text-center">
+            {isWebSearch 
+              ? "Web search mode: Get real-time information from the internet" 
+              : "Chat mode: General conversation and knowledge"
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+
+
+
+import { useState, useRef, useEffect } from "react";
+import { Send, Globe, MessageSquare, Copy, Trash2, RefreshCw } from "lucide-react";
+
+// Mock API base - replace with your actual API endpoint
+const API_BASE = "http://localhost:8000";
+
+// Enhanced text preprocessing for better formatting
+const preprocessText = (text) => {
+  if (!text) return "";
+
+  return text
+    .replace(/\r\n|\r/g, "\n")                           // Normalize line endings
+    
+    // Fix broken URLs first (before other processing)
+    .replace(/https:\s*\/\/\s*([^\s]+)/g, "https://$1") // Fix broken https URLs
+    .replace(/http:\s*\/\/\s*([^\s]+)/g, "http://$1")   // Fix broken http URLs
+    .replace(/(\w+)\.\s*(\w+)\.\s*(\w+)/g, "$1.$2.$3")  // Fix broken domain names
+    
+    // Fix bullet point patterns - be more specific about what constitutes a list item
+    .replace(/\*\s*\*\*([^*]+)\*\*([^*\n]+?)(?=\*\s*\*\*|\n|$)/g, "\n• **$1**$2") // * **text** content
+    .replace(/\*\s*([^*\n][^*\n]*?)(?=\*\s*[^*]|\n|$)/g, "\n• $1") // * text (not bold)
+    
+    // Clean up spacing but preserve intentional structure
+    .replace(/\n{3,}/g, "\n\n")                          // Collapse 3+ newlines into 2
+    .replace(/\s{3,}/g, " ")                             // Collapse 3+ spaces into 1
+    
+    // Fix mathematical expressions
+    .replace(/(\d+)\s*×\s*10<sup>([^<]+)<\/sup>/g, "$1 × 10^$2")  // Fix scientific notation
+    
+    // Clean up
+    .replace(/^\n+/, "")                                 // Remove leading newlines
+    .replace(/\n+$/, "")                                 // Remove trailing newlines
+    .trim();                                             // Trim trailing spaces
+};
+
+// Enhanced markdown renderer component
+const MarkdownRenderer = ({ content }) => {
+  const processedContent = preprocessText(content);
+  
+  // Convert markdown-like formatting to JSX
+  const renderContent = (text) => {
+    if (!text) return null;
+    
+    const lines = text.split('\n');
+    const elements = [];
+    let currentParagraph = [];
+    let inList = false;
+    let currentListItems = [];
+    
+    const flushParagraph = () => {
+      if (currentParagraph.length > 0) {
+        elements.push(
+          <p key={`p-${elements.length}`} className="mb-4 leading-relaxed">
+            {renderInlineFormatting(currentParagraph.join(' '))}
+          </p>
+        );
+        currentParagraph = [];
+      }
+    };
+    
+    const flushList = () => {
+      if (currentListItems.length > 0) {
+        elements.push(
+          <ul key={`ul-${elements.length}`} className="mb-4 ml-4">
+            {currentListItems}
+          </ul>
+        );
+        currentListItems = [];
+        inList = false;
+      }
+    };
+    
+    lines.forEach((line, index) => {
+      const trimmedLine = line.trim();
+      
+      // Handle headers
+      if (trimmedLine.startsWith('###')) {
+        flushParagraph();
+        flushList();
+        elements.push(<h3 key={`h3-${index}`} className="text-lg font-semibold mt-6 mb-3 text-gray-800">{trimmedLine.substring(3).trim()}</h3>);
+      } else if (trimmedLine.startsWith('##')) {
+        flushParagraph();
+        flushList();
+        elements.push(<h2 key={`h2-${index}`} className="text-xl font-semibold mt-6 mb-3 text-gray-800">{trimmedLine.substring(2).trim()}</h2>);
+      } else if (trimmedLine.startsWith('#')) {
+        flushParagraph();
+        flushList();
+        elements.push(<h1 key={`h1-${index}`} className="text-2xl font-bold mt-6 mb-4 text-gray-900">{trimmedLine.substring(1).trim()}</h1>);
+      }
+      // Handle bullet points (• or * at start)
+      else if (trimmedLine.match(/^[•*]\s/)) {
+        flushParagraph();
+        const bulletText = trimmedLine.replace(/^[•*]\s/, '');
+        currentListItems.push(
+          <li key={`li-${index}`} className="mb-2">
+            {renderInlineFormatting(bulletText)}
+          </li>
+        );
+        inList = true;
+      }
+      // Handle empty lines (paragraph breaks)
+      else if (trimmedLine === '') {
+        flushParagraph();
+        if (inList) {
+          flushList();
+        }
+      }
+      // Regular text lines
+      else {
+        if (inList) {
+          flushList();
+        }
+        currentParagraph.push(line);
+      }
+    });
+    
+    // Flush any remaining content
+    flushParagraph();
+    flushList();
+    
+    return elements;
+  };
+  
+  // Handle inline formatting (bold, italic, links, math, etc.)
+  const renderInlineFormatting = (text) => {
+    if (!text) return null;
+    
+    const parts = [];
+    let remaining = text;
+    let key = 0;
+    
+    while (remaining.length > 0) {
+      // Mathematical expressions with superscripts (e.g., 10^8)
+      const mathMatch = remaining.match(/(\d+(?:\.\d+)?)\s*[×x]\s*10\^(\d+)/);
+      if (mathMatch && mathMatch.index === 0) {
+        parts.push(
+          <span key={key++} className="font-mono">
+            {mathMatch[1]} × 10<sup className="text-xs">{mathMatch[2]}</sup>
+          </span>
+        );
+        remaining = remaining.substring(mathMatch[0].length);
+        continue;
+      }
+
+      // Scientific notation with HTML (e.g., 10<sup>8</sup>)
+      const sciMatch = remaining.match(/(\d+(?:\.\d+)?)\s*[×x]\s*10<sup>([^<]+)<\/sup>/);
+      if (sciMatch && sciMatch.index === 0) {
+        parts.push(
+          <span key={key++} className="font-mono">
+            {sciMatch[1]} × 10<sup className="text-xs">{sciMatch[2]}</sup>
+          </span>
+        );
+        remaining = remaining.substring(sciMatch[0].length);
+        continue;
+      }
+
+      // Mathematical formulas (e.g., Rs = 2GM/c²)
+      const formulaMatch = remaining.match(/([A-Za-z_]+)\s*=\s*([A-Za-z0-9²³¹⁰⁻⁺\/\s]+)/);
+      if (formulaMatch && formulaMatch.index === 0) {
+        parts.push(
+          <span key={key++} className="bg-blue-50 px-2 py-1 rounded font-mono text-sm border">
+            {formulaMatch[0]}
+          </span>
+        );
+        remaining = remaining.substring(formulaMatch[0].length);
+        continue;
+      }
+      
+      // Bold text **text** (with optional colon)
+      const boldMatch = remaining.match(/\*\*([^*]+)\*\*(:?)/);
+      if (boldMatch && boldMatch.index === 0) {
+        const hasColon = boldMatch[2] === ':';
+        parts.push(
+          <strong key={key++} className={`font-semibold ${hasColon ? 'text-gray-900' : ''}`}>
+            {boldMatch[1]}{hasColon ? ':' : ''}
+          </strong>
+        );
+        remaining = remaining.substring(boldMatch[0].length);
+        continue;
+      }
+      
+      // Italic text using underscores _text_ or single asterisks *text* (but not **text**)
+      const italicMatch = remaining.match(/(?<!\*)_([^_]+)_(?!\*)/) || remaining.match(/(?<!\*)\*([^*]+)\*(?!\*)/);
+      if (italicMatch && italicMatch.index === 0) {
+        parts.push(<em key={key++} className="italic text-gray-700">{italicMatch[1]}</em>);
+        remaining = remaining.substring(italicMatch[0].length);
+        continue;
+      }
+      
+      // Code `text`
+      const codeMatch = remaining.match(/`([^`]+)`/);
+      if (codeMatch && codeMatch.index === 0) {
+        parts.push(
+          <code key={key++} className="bg-gray-100 px-2 py-1 rounded text-sm font-mono text-gray-800">
+            {codeMatch[1]}
+          </code>
+        );
+        remaining = remaining.substring(codeMatch[0].length);
+        continue;
+      }
+      
+      // Links [text](url)
+      const markdownLinkMatch = remaining.match(/\[([^\]]+)\]\(([^)]+)\)/);
+      if (markdownLinkMatch && markdownLinkMatch.index === 0) {
+        parts.push(
+          <a key={key++} href={markdownLinkMatch[2]} target="_blank" rel="noopener noreferrer" 
+             className="text-blue-600 hover:text-blue-800 underline">
+            {markdownLinkMatch[1]}
+          </a>
+        );
+        remaining = remaining.substring(markdownLinkMatch[0].length);
+        continue;
+      }
+
+      // Plain URLs (but not broken ones)
+      const urlMatch = remaining.match(/(https?:\/\/[^\s<>()]+)/);
+      if (urlMatch && urlMatch.index === 0) {
+        parts.push(
+          <a key={key++} href={urlMatch[1]} target="_blank" rel="noopener noreferrer" 
+             className="text-blue-600 hover:text-blue-800 underline break-all">
+            {urlMatch[1]}
+          </a>
+        );
+        remaining = remaining.substring(urlMatch[0].length);
+        continue;
+      }
+
+      // Emojis - preserve them as-is
+      const emojiMatch = remaining.match(/[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F700}-\u{1F77F}]|[\u{1F780}-\u{1F7FF}]|[\u{1F800}-\u{1F8FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|😊|🌊/u);
+      if (emojiMatch && emojiMatch.index === 0) {
+        parts.push(<span key={key++} className="text-lg">{emojiMatch[0]}</span>);
+        remaining = remaining.substring(emojiMatch[0].length);
+        continue;
+      }
+      
+      // Find next special character or just take one character
+      const nextSpecial = remaining.search(/[\*_`\[\d]|https?:\/\/|[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]/u);
+      if (nextSpecial === -1) {
+        parts.push(remaining);
+        break;
+      } else if (nextSpecial > 0) {
+        parts.push(remaining.substring(0, nextSpecial));
+        remaining = remaining.substring(nextSpecial);
+      } else {
+        parts.push(remaining[0]);
+        remaining = remaining.substring(1);
+      }
+    }
+    
+    return parts;
+  };
+  
+  return <div className="prose prose-sm max-w-none">{renderContent(processedContent)}</div>;
+};
+
+export default function NovaChat() {
+  const [message, setMessage] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [sessionId, setSessionId] = useState(null);
+  const [isWebSearch, setIsWebSearch] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [sessions, setSessions] = useState([]);
+  const [showSessions, setShowSessions] = useState(false);
+  const abortControllerRef = useRef(null);
+  const messagesEndRef = useRef(null);
+  const textareaRef = useRef(null);
+
+  // Auto-scroll to bottom
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`;
+    }
+  }, [message]);
+
+  // Load sessions
+  const loadSessions = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/sessions`);
+      if (response.ok) {
+        const data = await response.json();
+        setSessions(data.sessions || []);
+      }
+    } catch (error) {
+      console.error('Failed to load sessions:', error);
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!message.trim() || isLoading) return;
+
+    const endpoint = isWebSearch ? "/web_search" : "/chat";
+    const userMessage = {
+      role: "user",
+      content: message.trim(),
+      isWebSearch,
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setMessage("");
+    setIsLoading(true);
+
+    // Cancel any ongoing request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          message: userMessage.content,
+          ...(sessionId && { session_id: sessionId }),
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+      }
+
+      // Add initial assistant message
+      const assistantMessage = {
+        role: "assistant",
+        content: "",
+        isWebSearch,
+        timestamp: new Date().toISOString(),
+        isStreaming: true,
+      };
+
+      setMessages(prev => [...prev, assistantMessage]);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulatedContent = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const part of parts) {
+          const trimmed = part.trim();
+          if (!trimmed.startsWith("data:")) continue;
+
+          const data = trimmed.slice(5).trim();
+          if (data === "[DONE]" || data === "") continue;
+
+          // Handle session ID extraction
+          if (data.includes("session ID:")) {
+            const sessionMatch = data.match(/session ID: `([^`]+)`/);
+            if (sessionMatch) {
+              setSessionId(sessionMatch[1]);
+            }
+          }
+
+          accumulatedContent += data + " ";
+
+          // Update the streaming message, but filter out system messages
+          setMessages(prev => {
+            const newMessages = [...prev];
+            const lastMessage = newMessages[newMessages.length - 1];
+            if (lastMessage && lastMessage.role === "assistant") {
+              // Filter out system messages and metadata
+              const cleanData = data
+                .replace(/🔗 Links found:.*$/s, '') // Remove link verification messages
+                .replace(/✅ Continue.*session ID:.*$/s, '') // Remove session continuation messages
+                .replace(/💡 You can ask follow-up.*$/s, '') // Remove follow-up suggestions
+                .replace(/📌 Tip:.*$/s, '') // Remove tips
+                .trim();
+              
+              if (cleanData && !cleanData.startsWith('🔗') && !cleanData.startsWith('✅') && !cleanData.startsWith('💡') && !cleanData.startsWith('📌')) {
+                accumulatedContent += cleanData + " ";
+                lastMessage.content = accumulatedContent.trim();
+              }
+            }
+            return newMessages;
+          });
+        }
+      }
+
+      // Finalize the message
+      setMessages(prev => {
+        const newMessages = [...prev];
+        const lastMessage = newMessages[newMessages.length - 1];
+        if (lastMessage && lastMessage.role === "assistant") {
+          lastMessage.content = accumulatedContent.trim();
+          lastMessage.isStreaming = false;
+        }
+        return newMessages;
+      });
+
+    } catch (error) {
+      if (error.name !== "AbortError") {
+        setMessages(prev => [...prev, {
+          role: "error",
+          content: `Error: ${error.message}`,
+          timestamp: new Date().toISOString(),
+        }]);
+      }
+    } finally {
+      setIsLoading(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  const copyMessage = async (content) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      // You could add a toast notification here
+    } catch (error) {
+      console.error('Failed to copy:', error);
+    }
+  };
+
+  const clearChat = () => {
+    setMessages([]);
+    setSessionId(null);
+  };
+
+  const toggleMode = () => {
+    setIsWebSearch(!isWebSearch);
+  };
+
+  return (
+    <div className="flex flex-col h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+      {/* Header */}
+      <div className="bg-white/80 backdrop-blur-sm border-b border-gray-200 px-4 py-4 shadow-sm">
+        <div className="max-w-6xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                <span className="text-white font-bold text-sm">N</span>
+              </div>
+              <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                NOVA Assistant
+              </h1>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <span
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 ${
+                  isWebSearch
+                    ? "bg-purple-100 text-purple-800 border border-purple-200"
+                    : "bg-blue-100 text-blue-800 border border-blue-200"
+                }`}
+              >
+                {isWebSearch ? (
+                  <>
+                    <Globe className="inline-block w-3 h-3 mr-1" />
+                    Web Search Mode
+                  </>
+                ) : (
+                  <>
+                    <MessageSquare className="inline-block w-3 h-3 mr-1" />
+                    Chat Mode
+                  </>
+                )}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {sessionId && (
+              <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                Session: {sessionId.slice(-8)}
+              </span>
+            )}
+            <button
+              onClick={clearChat}
+              className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              title="Clear Chat"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-4 py-6">
+        <div className="max-w-4xl mx-auto space-y-6">
+          {messages.length === 0 && (
+            <div className="text-center py-12">
+              <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <MessageSquare className="w-8 h-8 text-white" />
+              </div>
+              <h2 className="text-2xl font-bold text-gray-800 mb-2">Welcome to NOVA</h2>
+              <p className="text-gray-600 mb-6">Your intelligent assistant for chat and web search</p>
+              <div className="flex flex-wrap justify-center gap-2">
+                <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm">💬 General Chat</span>
+                <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm">🌐 Web Research</span>
+                <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">📚 Wikipedia</span>
+              </div>
+            </div>
+          )}
+
+          {messages.map((msg, index) => {
+            const isUser = msg.role === "user";
+            const isError = msg.role === "error";
+            const isStreaming = msg.isStreaming;
+
+            return (
+              <div
+                key={index}
+                className={`flex w-full ${isUser ? "justify-end" : "justify-start"}`}
+              >
+                <div
+                  className={`max-w-[85%] rounded-2xl px-4 py-3 shadow-sm relative group ${
+                    isUser
+                      ? isWebSearch
+                        ? "bg-gradient-to-r from-purple-500 to-purple-600 text-white"
+                        : "bg-gradient-to-r from-blue-500 to-blue-600 text-white"
+                      : isError
+                      ? "bg-red-50 text-red-800 border border-red-200"
+                      : msg.isWebSearch
+                      ? "bg-gradient-to-r from-purple-50 to-purple-100 border border-purple-200 text-gray-800"
+                      : "bg-white border border-gray-200 text-gray-800 shadow-md"
+                  }`}
+                >
+                  {/* Mode indicator for assistant messages */}
+                  {!isUser && !isError && (
+                    <div className={`text-xs mb-2 font-medium flex items-center gap-1 ${
+                      msg.isWebSearch ? "text-purple-600" : "text-blue-600"
+                    }`}>
+                      {msg.isWebSearch ? (
+                        <>
+                          <Globe className="w-3 h-3" />
+                          Web Search Results
+                        </>
+                      ) : (
+                        <>
+                          <MessageSquare className="w-3 h-3" />
+                          Chat Response
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Message content */}
+                  <div className="text-sm leading-relaxed">
+                    {isUser || isError ? (
+                      <div className="whitespace-pre-wrap">{msg.content}</div>
+                    ) : (
+                      <MarkdownRenderer content={msg.content} />
+                    )}
+                    
+                    {isStreaming && (
+                      <div className="inline-flex items-center gap-1 ml-2">
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Copy button */}
+                  {!isUser && !isStreaming && (
+                    <button
+                      onClick={() => copyMessage(msg.content)}
+                      className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-gray-400 hover:text-gray-600 bg-white/80 rounded-md hover:bg-white/90"
+                      title="Copy message"
+                    >
+                      <Copy className="w-3 h-3" />
+                    </button>
+                  )}
+
+                  {/* Timestamp */}
+                  <div className={`text-xs mt-2 ${isUser ? "text-white/70" : "text-gray-500"}`}>
+                    {new Date(msg.timestamp).toLocaleTimeString()}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <div ref={messagesEndRef} />
+        </div>
+      </div>
+
+      {/* Input area */}
+      <div className="bg-white/80 backdrop-blur-sm border-t border-gray-200 px-4 py-4">
+        <div className="max-w-4xl mx-auto">
+          <div className="flex items-end gap-3">
+            <div className="flex-1 relative">
+              <textarea
+                ref={textareaRef}
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onKeyDown={handleKeyDown}
+                rows={1}
+                className="w-full resize-none rounded-xl border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent px-4 py-3 pr-12 text-sm bg-white/90 backdrop-blur-sm"
+                placeholder={isWebSearch ? "Search the web..." : "Type your message..."}
+                disabled={isLoading}
+              />
+              <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                <span className="text-xs text-gray-400">
+                  {message.length}/1000
+                </span>
+              </div>
+            </div>
+            
+            <button
+              onClick={toggleMode}
+              className={`p-3 rounded-xl transition-all duration-200 ${
+                isWebSearch
+                  ? "bg-purple-100 text-purple-600 hover:bg-purple-200"
+                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+              }`}
+              title={isWebSearch ? "Switch to Chat Mode" : "Switch to Web Search Mode"}
+            >
+              {isWebSearch ? <Globe className="w-5 h-5" /> : <MessageSquare className="w-5 h-5" />}
+            </button>
+            
+            <button
+              onClick={handleSendMessage}
+              disabled={!message.trim() || isLoading}
+              className="p-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-xl hover:from-blue-600 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-md"
+            >
+              {isLoading ? (
+                <RefreshCw className="w-5 h-5 animate-spin" />
+              ) : (
+                <Send className="w-5 h-5" />
+              )}
+            </button>
+          </div>
+          
+          <div className="text-xs text-gray-500 mt-2 text-center">
+            Press Enter to send • Shift+Enter for new line • Use 🌐 for web search
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

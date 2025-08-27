@@ -1,0 +1,199 @@
+import { useState, useRef, useEffect } from "react";
+import API_BASE from "../config";
+
+export default function Chat({ sessionId: propSessionId }) {
+  const [message, setMessage] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [sessionId, setSessionId] = useState(propSessionId);
+  const [isWebSearch, setIsWebSearch] = useState(false);
+  const abortControllerRef = useRef(null);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const handleSendMessage = async () => {
+    if (!message.trim()) return;
+
+    const endpoint = isWebSearch ? "/web_search" : "/chat";
+    const userMessage = {
+      role: "user",
+      content: message,
+      isWebSearch,
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setMessage("");
+    setIsWebSearch(false);
+
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          message,
+          ...(sessionId && { session_id: sessionId }),
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "",
+          isWebSearch,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulatedContent = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const part of parts) {
+          const trimmed = part.trim();
+          if (!trimmed.startsWith("data:")) continue;
+
+          const data = trimmed.slice(5).trim();
+          if (data === "[DONE]") continue;
+
+          accumulatedContent += data + "\n";
+
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last.role === "assistant") {
+              return [
+                ...prev.slice(0, -1),
+                { ...last, content: accumulatedContent },
+              ];
+            }
+            return prev;
+          });
+        }
+      }
+
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last.role === "assistant") {
+          return [...prev.slice(0, -1), { ...last, content: accumulatedContent }];
+        }
+        return prev;
+      });
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "error",
+            content: `Error: ${err.message}`,
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+      }
+    } finally {
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
+      <div style={{ padding: "10px", borderBottom: "1px solid #ccc" }}>
+        <span style={{ padding: "5px", borderRadius: "5px" }}>
+          {isWebSearch ? "Web Search Mode" : "Chat Mode"}
+        </span>
+      </div>
+
+      <div style={{ flex: 1, overflowY: "auto", padding: "10px" }}>
+        {messages.map((msg, index) => (
+          <div
+            key={index}
+            style={{
+              display: "flex",
+              justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
+              marginBottom: "10px",
+            }}
+          >
+            <div
+              style={{
+                maxWidth: "80%",
+                padding: "10px",
+                border: "1px solid #ccc",
+                borderRadius: "5px",
+                background: msg.role === "user" ? "#007bff" : msg.role === "error" ? "#ffe6e6" : "#fff",
+                color: msg.role === "user" ? "#fff" : msg.role === "error" ? "#dc3545" : "#000",
+              }}
+            >
+              {msg.content}
+            </div>
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+
+      <div style={{ padding: "10px", borderTop: "1px solid #ccc" }}>
+        <div style={{ display: "flex", gap: "10px" }}>
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={handleKeyDown}
+            rows={1}
+            style={{
+              flex: 1,
+              resize: "none",
+              padding: "10px",
+              border: "1px solid #ccc",
+              borderRadius: "5px",
+            }}
+            placeholder="Type your message here..."
+          />
+          <button onClick={handleSendMessage} style={{ padding: "10px", borderRadius: "5px" }}>
+            Send
+          </button>
+          <button
+            onClick={() => setIsWebSearch(!isWebSearch)}
+            style={{
+              padding: "10px",
+              borderRadius: "5px",
+              background: isWebSearch ? "#007bff" : "#fff",
+              color: isWebSearch ? "#fff" : "#000",
+              border: "1px solid #ccc",
+            }}
+          >
+            Web
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

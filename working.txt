@@ -1,0 +1,965 @@
+works completely(scientific equation issue)
+but the scientific eqations displays corretly for
+
+const preprocessText = (text) => {
+  if (!text) return "";
+  return text
+    .replace(/\r\n|\r/g, "\n") // Normalize line endings
+    .trim(); // Remove leading/trailing whitespace
+}; but other's do not applys
+
+
+/////////////////////////////////////////////////////////////////////////////////////
+
+import { useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import API_BASE from "../config";
+
+const preprocessText = (text) => {
+  if (!text) return "";
+  return text
+    .replace(/\r\n|\r/g, "\n") // Normalize line endings
+    .replace(/\n{2,}/g, "\n\n") // Limit excessive newlines
+    .replace(/([^\n])(\n)(?!\n|-|\*|\d+\.)/g, "$1 ") // Prevent single newlines from breaking text
+    .replace(
+      /([^\n])\n(?!\n|[-*+]\s|\d+\.\s|#)/g,   // Merge lines unless it's clearly a list, heading, etc.
+      "$1 "
+    )
+    .replace(/\r\n|\r/g, "n") // Normalize line endings
+    .trim(); // Remove leading/trailing whitespace
+};
+
+export default function Chat({ sessionId: propSessionId }) {
+  const [message, setMessage] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [sessionId, setSessionId] = useState(propSessionId);
+  const [isWebSearch, setIsWebSearch] = useState(false);
+  const abortControllerRef = useRef(null);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const handleSendMessage = async () => {
+    const rawMessage = message;
+    const cleanedMessage = preprocessText(rawMessage);
+
+    if (!cleanedMessage) return;
+
+    const endpoint = isWebSearch ? "/web_search" : "/chat";
+    const userMessage = {
+      role: "user",
+      content: cleanedMessage,
+      isWebSearch,
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setMessage("");
+    setIsWebSearch(false);
+
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          message: cleanedMessage,
+          ...(sessionId && { session_id: sessionId }),
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "",
+          isWebSearch,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulatedContent = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const part of parts) {
+          const trimmed = part.trim();
+          if (!trimmed.startsWith("data:")) continue;
+
+          const data = trimmed.slice(5).trim();
+          if (data === "[DONE]") continue;
+
+          accumulatedContent += data + "\n";
+
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last.role === "assistant") {
+              return [
+                ...prev.slice(0, -1),
+                { ...last, content: preprocessText(accumulatedContent) },
+              ];
+            }
+            return prev;
+          });
+        }
+      }
+
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last.role === "assistant") {
+          return [
+            ...prev.slice(0, -1),
+            { ...last, content: preprocessText(accumulatedContent) },
+          ];
+        }
+        return prev;
+      });
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "error",
+            content: `## Error\n\n${err.message}`,
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+      }
+    } finally {
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  return (
+    <div className="flex flex-col min-h-screen bg-gray-50">
+      <div className="bg-white border-b border-gray-200 px-4 py-3">
+        <div className="max-w-5xl mx-auto">
+          <span
+            className={`px-3 py-1 rounded-full text-sm font-medium ${
+              isWebSearch
+                ? "bg-blue-100 text-blue-800"
+                : "bg-gray-100 text-gray-800"
+            }`}
+          >
+            {isWebSearch ? "🌐 Web Search Mode" : "💬 Chat Mode"}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 max-w-5xl mx-auto w-full">
+        {messages.map((msg, index) => (
+          <div
+            key={index}
+            className={`flex ${
+              msg.role === "user" ? "justify-end" : "justify-start"
+            } w-full`}
+          >
+            <div
+              className={`max-w-[80%] rounded-lg p-5 text-base break-words shadow-sm ${
+                msg.role === "user"
+                  ? isWebSearch
+                    ? "bg-blue-600 text-white"
+                    : "bg-blue-600 text-white"
+                  : msg.role === "error"
+                  ? "bg-red-50 text-red-800 border-l-4 border-red-400"
+                  : msg.isWebSearch
+                  ? "bg-blue-50 border border-blue-200 text-gray-800"
+                  : "bg-white border border-gray-200 text-gray-800"
+              }`}
+            >
+              {msg.isWebSearch && msg.role !== "user" && (
+                <div className="text-sm text-blue-600 mb-3 font-medium">
+                  🌐 Web Search Results
+                </div>
+              )}
+              <div className="prose prose-sm max-w-none">
+                <ReactMarkdown
+                  remarkPlugins={[remarkMath]}
+                  rehypePlugins={[rehypeKatex]}
+                  components={{
+                    h2: ({ node, ...props }) => (
+                      <h2 className="text-xl font-semibold mt-4 mb-2" {...props} />
+                    ),
+                    h3: ({ node, ...props }) => (
+                      <h3 className="text-lg font-medium mt-3 mb-1" {...props} />
+                    ),
+                    ul: ({ node, ...props }) => (
+                      <ul className="list-disc pl-5 mb-2 space-y-1" {...props} />
+                    ),
+                    ol: ({ node, ...props }) => (
+                      <ol className="list-decimal pl-5 mb-2 space-y-1" {...props} />
+                    ),
+                    li: ({ node, ...props }) => (
+                      <li className="ml-2" {...props} />
+                    ),
+                    table: ({ node, ...props }) => (
+                      <table className="border-collapse border border-gray-300 my-2" {...props} />
+                    ),
+                    th: ({ node, ...props }) => (
+                      <th className="border border-gray-300 px-4 py-2 bg-gray-100" {...props} />
+                    ),
+                    td: ({ node, ...props }) => (
+                      <td className="border border-gray-300 px-4 py-2" {...props} />
+                    ),
+                    code: ({ node, inline, ...props }) =>
+                      inline ? (
+                        <code className="bg-gray-100 rounded px-1" {...props} />
+                      ) : (
+                        <code className="block bg-gray-100 rounded p-2" {...props} />
+                      ),
+                    p: ({ node, ...props }) => (
+                      <p className="mb-2" {...props} />
+                    ),
+                  }}
+                >
+                  {preprocessText(msg.content)}
+                </ReactMarkdown>
+              </div>
+            </div>
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+
+      <div className="bg-white border-t border-gray-200 p-4">
+        <div className="max-w-5xl mx-auto flex items-end gap-2">
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={handleKeyDown}
+            rows={1}
+            className="flex-1 resize-none rounded-md border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 p-3 text-base"
+            placeholder="Type your message here..."
+          />
+          <button
+            onClick={handleSendMessage}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            Send
+          </button>
+          <button
+            onClick={() => setIsWebSearch(!isWebSearch)}
+            className={`px-4 py-2 rounded-md ${
+              isWebSearch
+                ? "bg-blue-600 text-white hover:bg-blue-700"
+                : "bg-white border border-gray-300 hover:bg-gray-100"
+            }`}
+          >
+            🌐
+          </button>
+        </div>
+      </div>
+
+      <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css"
+      />
+    </div>
+  );
+}
+
+
+
+
+
+
+
+///////////////////////////// works very well but breaks some times /////////////////////////////////////////
+import { useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import API_BASE from "../config";
+
+const preprocessText = (text) => {
+  if (!text) return "";
+
+  // Step 1: Normalize line endings
+  text = text.replace(/\r\n|\r/g, "\n");
+
+  // Step 2: Protect LaTeX equations (inline and display)
+  // Replace $...$ and $$...$$ with placeholders to avoid processing
+  const latexPlaceholders = [];
+  text = text.replace(/(\$\$[\s\S]*?\$\$|\$[\s\S]*?\$)/g, (match, index) => {
+    latexPlaceholders.push(match);
+    return `__LATEX_${latexPlaceholders.length - 1}__`;
+  });
+
+  // Step 3: Limit excessive newlines, but preserve structure
+  text = text.replace(/\n{3,}/g, "\n\n");
+
+  // Step 4: Merge single newlines, but skip protected LaTeX, lists, and headings
+  text = text.replace(
+    /([^\n])\n(?!\n|[-*+]\s|\d+\.\s|#|\s*__LATEX_\d+__)/g,
+    "$1 "
+  );
+
+  // Step 5: Trim leading/trailing whitespace
+  text = text.trim();
+
+  // Step 6: Restore LaTeX equations
+  text = text.replace(/__LATEX_(\d+)__/g, (_, index) => latexPlaceholders[index]);
+
+  // Step 7: Ensure proper Markdown and LaTeX formatting
+  // Add spacing around headings and equations for clarity
+  text = text.replace(/^(#+.*)$/gm, "\n$1\n");
+  text = text.replace(/^(\$\$.*\$\$)$/gm, "\n$1\n");
+
+  return text;
+};
+
+export default function Chat({ sessionId: propSessionId }) {
+  const [message, setMessage] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [sessionId, setSessionId] = useState(propSessionId);
+  const [isWebSearch, setIsWebSearch] = useState(false);
+  const abortControllerRef = useRef(null);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const handleSendMessage = async () => {
+    const rawMessage = message;
+    const cleanedMessage = preprocessText(rawMessage);
+
+    if (!cleanedMessage) return;
+
+    const endpoint = isWebSearch ? "/web_search" : "/chat";
+    const userMessage = {
+      role: "user",
+      content: cleanedMessage,
+      isWebSearch,
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setMessage("");
+    setIsWebSearch(false);
+
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          message: cleanedMessage,
+          ...(sessionId && { session_id: sessionId }),
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "",
+          isWebSearch,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulatedContent = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const part of parts) {
+          const trimmed = part.trim();
+          if (!trimmed.startsWith("data:")) continue;
+
+          const data = trimmed.slice(5).trim();
+          if (data === "[DONE]") continue;
+
+          accumulatedContent += data + "\n";
+
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last.role === "assistant") {
+              return [
+                ...prev.slice(0, -1),
+                { ...last, content: preprocessText(accumulatedContent) },
+              ];
+            }
+            return prev;
+          });
+        }
+      }
+
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last.role === "assistant") {
+          return [
+            ...prev.slice(0, -1),
+            { ...last, content: preprocessText(accumulatedContent) },
+          ];
+        }
+        return prev;
+      });
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "error",
+            content: `## Error\n\n${err.message}`,
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+      }
+    } finally {
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  return (
+    <div className="flex flex-col min-h-screen bg-gray-50">
+      <div className="bg-white border-b border-gray-200 px-4 py-3">
+        <div className="max-w-5xl mx-auto">
+          <span
+            className={`px-3 py-1 rounded-full text-sm font-medium ${
+              isWebSearch
+                ? "bg-blue-100 text-blue-800"
+                : "bg-gray-100 text-gray-800"
+            }`}
+          >
+            {isWebSearch ? "🌐 Web Search Mode" : "💬 Chat Mode"}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 max-w-5xl mx-auto w-full">
+        {messages.map((msg, index) => (
+          <div
+            key={index}
+            className={`flex ${
+              msg.role === "user" ? "justify-end" : "justify-start"
+            } w-full`}
+          >
+            <div
+              className={`max-w-[80%] rounded-lg p-5 text-base break-words shadow-sm ${
+                msg.role === "user"
+                  ? isWebSearch
+                    ? "bg-blue-600 text-white"
+                    : "bg-blue-600 text-white"
+                  : msg.role === "error"
+                  ? "bg-red-50 text-red-800 border-l-4 border-red-400"
+                  : msg.isWebSearch
+                  ? "bg-blue-50 border border-blue-200 text-gray-800"
+                  : "bg-white border border-gray-200 text-gray-800"
+              }`}
+            >
+              {msg.isWebSearch && msg.role !== "user" && (
+                <div className="text-sm text-blue-600 mb-3 font-medium">
+                  🌐 Web Search Results
+                </div>
+              )}
+              <div className="prose prose-sm max-w-none">
+                <ReactMarkdown
+                  remarkPlugins={[remarkMath]}
+                  rehypePlugins={[rehypeKatex]}
+                  components={{
+                    h2: ({ node, ...props }) => (
+                      <h2 className="text-xl font-semibold mt-4 mb-2" {...props} />
+                    ),
+                    h3: ({ node, ...props }) => (
+                      <h3 className="text-lg font-medium mt-3 mb-1" {...props} />
+                    ),
+                    ul: ({ node, ...props }) => (
+                      <ul className="list-disc pl-5 mb-2 space-y-1" {...props} />
+                    ),
+                    ol: ({ node, ...props }) => (
+                      <ol className="list-decimal pl-5 mb-2 space-y-1" {...props} />
+                    ),
+                    li: ({ node, ...props }) => (
+                      <li className="ml-2" {...props} />
+                    ),
+                    table: ({ node, ...props }) => (
+                      <table className="border-collapse border border-gray-300 my-2" {...props} />
+                    ),
+                    th: ({ node, ...props }) => (
+                      <th className="border border-gray-300 px-4 py-2 bg-gray-100" {...props} />
+                    ),
+                    td: ({ node, ...props }) => (
+                      <td className="border border-gray-300 px-4 py-2" {...props} />
+                    ),
+                    code: ({ node, inline, ...props }) =>
+                      inline ? (
+                        <code className="bg-gray-100 rounded px-1" {...props} />
+                      ) : (
+                        <code className="block bg-gray-100 rounded p-2" {...props} />
+                      ),
+                    p: ({ node, ...props }) => (
+                      <p className="mb-2" {...props} />
+                    ),
+                  }}
+                >
+                  {preprocessText(msg.content)}
+                </ReactMarkdown>
+              </div>
+            </div>
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+
+      <div className="bg-white border-t border-gray-200 p-4">
+        <div className="max-w-5xl mx-auto flex items-end gap-2">
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={handleKeyDown}
+            rows={1}
+            className="flex-1 resize-none rounded-md border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 p-3 text-base"
+            placeholder="Type your message here..."
+          />
+          <button
+            onClick={handleSendMessage}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            Send
+          </button>
+          <button
+            onClick={() => setIsWebSearch(!isWebSearch)}
+            className={`px-4 py-2 rounded-md ${
+              isWebSearch
+                ? "bg-blue-600 text-white hover:bg-blue-700"
+                : "bg-white border border-gray-300 hover:bg-gray-100"
+            }`}
+          >
+            🌐
+          </button>
+        </div>
+      </div>
+
+      <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css"
+      />
+    </div>
+  );
+}
+
+
+
+
+
+
+
+
+//////////////////////////
+import { useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import API_BASE from "../config";
+
+const preprocessText = (text) => {
+  if (!text) return "";
+
+  // Step 1: Clean up artifacts (remove extra spaces between characters, duplicate words)
+  text = text.replace(/\b(\w)\s+(\w)\s+(\w)\b/g, "$1$2$3"); // Fix spaced-out words like "W h e n"
+  text = text.replace(/,\s*(then|so)\b/g, "$1"); // Remove duplicate ",then" or ",so"
+
+  // Step 2: Normalize line endings
+  text = text.replace(/\r\n|\r/g, "\n");
+
+  // Step 3: Protect LaTeX equations (inline and display)
+  const latexPlaceholders = [];
+  text = text.replace(/(\$\$[\s\S]*?\$\$|\$[^\$]*?\$)/g, (match) => {
+    latexPlaceholders.push(match);
+    return `\_\_LATEX\_${latexPlaceholders.length - 1}\_\_`;
+  });
+
+  // Step 4: Protect malformed LaTeX equations (e.g., "= ... $$")
+  text = text.replace(/=\s*([^\$]*?)\$\$/g, (match, content) => {
+    latexPlaceholders.push(`$${content}$`);
+    return `= \_\_LATEX\_${latexPlaceholders.length - 1}\_\_`;
+  });
+
+  // Step 5: Protect potential LaTeX fragments (e.g., \frac, \pi, \int without delimiters)
+  text = text.replace(
+    /\\(frac|int|pi|psi|le|ge)\b(?:{[^{}]*})?(?:{[^{}]*})?/g,
+    (match) => {
+      latexPlaceholders.push(`$${match}$`);
+      return `\_\_LATEX\_${latexPlaceholders.length - 1}\_\_`;
+    }
+  );
+
+  // Step 6: Protect quantum mechanics-specific patterns (e.g., u \frac{\pi x}{L})
+  text = text.replace(
+    /\b(u|du|dx)\s*\\frac\{([^}]*)\}\{([^}]*)\}/g,
+    (match, varName, num, denom) => {
+      latexPlaceholders.push(`$${varName} \\\\frac{${num}}{${denom}}$`);
+      return `\_\_LATEX\_${latexPlaceholders.length - 1}\_\_`;
+    }
+  );
+
+  // Step 7: Process text while preserving LaTeX placeholders
+  // Limit excessive newlines, but allow up to two for readability
+  text = text.replace(/\n{3,}/g, "\n\n");
+
+  // Step 8: Merge single newlines, but preserve sentence-like structures
+  text = text.replace(
+    /([^\n])\n(?!\n|[-*+]\s*(__LATEX_\d+__)?|\d+\.\s|#|\s*__LATEX_\d+__|\b(Let|When|Therefore|If|Then)\b|[.,:;]$)/g,
+    "$1 "
+  );
+
+  text = text.replace(
+      /([^\n])\n(?!\n|[*+]\s|\d+\.\s|#)/g,
+      "$1 "
+    )
+
+
+  // Step 9: Trim leading/trailing whitespace
+  text = text.trim();
+
+  // Step 10: Format markdown elements
+  // Add newlines around headings
+  text = text.replace(/^(#+.*)$/gm, "\n\n$1\n\n");
+  // Add newlines after list items (before non-list content)
+  text = text.replace(/([-*+]\s.*)\n\n(?![-*+\d])/g, "$1\n\n\n");
+
+  // Step 11: Handle specific text replacements and bolding
+  text = text.replace(
+    /Dividing by \$A e\^\{i\(kx \\omega t\)\}\$:/g,
+    "**Dividing by $A e^{i(kx - \\omega t)}$:**"
+  );
+  text = text.replace(
+    /Dividing by \$A e\^\{i\(kx - \\omega t\)\}\$:/g,
+    "**Dividing by $A e^{i(kx - \\omega t)}$:**"
+  );
+
+  // Step 12: Restore LaTeX equations
+  text = text.replace(/__LATEX_(\d+)__/g, (_, index) => latexPlaceholders[index]);
+
+  // Step 13: Ensure spacing around inline equations
+  text = text.replace(/(\$[^\$]+\$)\s*([^\s\$])/g, "$1 $2"); // Space after
+  text = text.replace(/([^\s\$])\s*(\$[^\$]+\$)/g, "$1 $2"); // Space before
+
+  // Step 14: Ensure display equations have proper spacing
+  text = text.replace(/^(\$\$.*\$\$)$/gm, "\n$1\n");
+
+  // Step 15: Clean up multiple consecutive newlines
+  text = text.replace(/\n{3,}/g, "\n\n");
+
+  return text;
+};
+
+export default function Chat({ sessionId: propSessionId }) {
+  const [message, setMessage] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [sessionId, setSessionId] = useState(propSessionId);
+  const [isWebSearch, setIsWebSearch] = useState(false);
+  const abortControllerRef = useRef(null);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const handleSendMessage = async () => {
+    const rawMessage = message;
+    const cleanedMessage = preprocessText(rawMessage);
+
+    if (!cleanedMessage) return;
+
+    const endpoint = isWebSearch ? "/web_search" : "/chat";
+    const userMessage = {
+      role: "user",
+      content: cleanedMessage,
+      isWebSearch,
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setMessage("");
+    setIsWebSearch(false);
+
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          message: cleanedMessage,
+          ...(sessionId && { session_id: sessionId }),
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "",
+          isWebSearch,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulatedContent = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const part of parts) {
+          const trimmed = part.trim();
+          if (!trimmed.startsWith("data:")) continue;
+
+          const data = trimmed.slice(5).trim();
+          if (data === "[DONE]") continue;
+
+          accumulatedContent += data + "\n";
+
+          setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last.role === "assistant") {
+              return [
+                ...prev.slice(0, -1),
+                { ...last, content: preprocessText(accumulatedContent) },
+              ];
+            }
+            return prev;
+          });
+        }
+      }
+
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last.role === "assistant") {
+          return [
+            ...prev.slice(0, -1),
+            { ...last, content: preprocessText(accumulatedContent) },
+          ];
+        }
+        return prev;
+      });
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "error",
+            content: `## Error\n\n${err.message}`,
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+      }
+    } finally {
+      abortControllerRef.current = null;
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  return (
+    <div className="flex flex-col min-h-screen bg-gray-50">
+      <div className="bg-white border-b border-gray-200 px-4 py-3">
+        <div className="max-w-5xl mx-auto">
+          <span
+            className={`px-3 py-1 rounded-full text-sm font-medium ${
+              isWebSearch
+                ? "bg-blue-100 text-blue-800"
+                : "bg-gray-100 text-gray-800"
+            }`}
+          >
+            {isWebSearch ? "🌐 Web Search Mode" : "💬 Chat Mode"}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 max-w-5xl mx-auto w-full">
+        {messages.map((msg, index) => (
+          <div
+            key={index}
+            className={`flex ${
+              msg.role === "user" ? "justify-end" : "justify-start"
+            } w-full`}
+          >
+            <div
+              className={`max-w-[80%] rounded-lg p-5 text-base break-words shadow-sm ${
+                msg.role === "user"
+                  ? isWebSearch
+                    ? "bg-blue-600 text-white"
+                    : "bg-blue-600 text-white"
+                  : msg.role === "error"
+                  ? "bg-red-50 text-red-800 border-l-4 border-red-400"
+                  : msg.isWebSearch
+                  ? "bg-blue-50 border border-blue-200 text-gray-800"
+                  : "bg-white border border-gray-200 text-gray-800"
+              }`}
+            >
+              {msg.isWebSearch && msg.role !== "user" && (
+                <div className="text-sm text-blue-600 mb-3 font-medium">
+                  🌐 Web Search Results
+                </div>
+              )}
+              <div className="prose prose-sm max-w-none">
+                <ReactMarkdown
+                  remarkPlugins={[remarkMath]}
+                  rehypePlugins={[rehypeKatex]}
+                  components={{
+                    h2: ({ node, ...props }) => (
+                      <h2 className="text-xl font-semibold mt-4 mb-2" {...props} />
+                    ),
+                    h3: ({ node, ...props }) => (
+                      <h3 className="text-lg font-medium mt-3 mb-1" {...props} />
+                    ),
+                    ul: ({ node, ...props }) => (
+                      <ul className="list-disc pl-5 mb-2 space-y-1" {...props} />
+                    ),
+                    ol: ({ node, ...props }) => (
+                      <ol className="list-decimal pl-5 mb-2 space-y-1" {...props} />
+                    ),
+                    li: ({ node, ...props }) => (
+                      <li className="ml-2" {...props} />
+                    ),
+                    table: ({ node, ...props }) => (
+                      <table className="border-collapse border border-gray-300 my-2" {...props} />
+                    ),
+                    th: ({ node, ...props }) => (
+                      <th className="border border-gray-300 px-4 py-2 bg-gray-100" {...props} />
+                    ),
+                    td: ({ node, ...props }) => (
+                      <td className="border border-gray-300 px-4 py-2" {...props} />
+                    ),
+                    code: ({ node, inline, ...props }) =>
+                      inline ? (
+                        <code className="bg-gray-100 rounded px-1" {...props} />
+                      ) : (
+                        <code className="block bg-gray-100 rounded p-2" {...props} />
+                      ),
+                    p: ({ node, ...props }) => (
+                      <p className="mb-2" {...props} />
+                    ),
+                  }}
+                >
+                  {preprocessText(msg.content)}
+                </ReactMarkdown>
+              </div>
+            </div>
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+
+      <div className="bg-white border-t border-gray-200 p-4">
+        <div className="max-w-5xl mx-auto flex items-end gap-2">
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyDown={handleKeyDown}
+            rows={1}
+            className="flex-1 resize-none rounded-md border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 p-3 text-base"
+            placeholder="Type your message here..."
+          />
+          <button
+            onClick={handleSendMessage}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            Send
+          </button>
+          <button
+            onClick={() => setIsWebSearch(!isWebSearch)}
+            className={`px-4 py-2 rounded-md ${
+              isWebSearch
+                ? "bg-blue-600 text-white hover:bg-blue-700"
+                : "bg-white border border-gray-300 hover:bg-gray-100"
+            }`}
+          >
+            🌐
+          </button>
+        </div>
+      </div>
+
+      <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css"
+      />
+    </div>
+  );
+}
