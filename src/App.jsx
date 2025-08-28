@@ -9,11 +9,6 @@ export default function App() {
 
   return (
     <Router>
-      <nav className="p-4 bg-gray-800 text-white flex gap-4">
-        <Link to="/home" className="hover:underline">Home</Link>
-        <Link to="/sessions" className="hover:underline">Sessions</Link>
-      </nav>
-
       <Routes>
         <Route path="/home" element={<Home sessionId={sessionId} setSessionId={setSessionId} />} />
         <Route path="/sessions" element={<Sessions />} />
